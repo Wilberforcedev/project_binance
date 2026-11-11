@@ -5,9 +5,13 @@ services:
     build: ./
     container_name: telegram_interface
     command: ["python3", "main.py"]
-    volumes:
-      - .:/app
-    ports:
-      - 8000:8000
+    restart: unless-stopped
     env_file:
       - ./.env
+    environment:
+      ANTRADE_DB_PATH: /data/antrade.sqlite3
+    volumes:
+      - antrade-data:/data
+
+volumes:
+  antrade-data:
