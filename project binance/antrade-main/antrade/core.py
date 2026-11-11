@@ -140,6 +140,12 @@ class BinanceAPI:
             raise RuntimeError('Binance order has no executed quote value')
         return float(quote_qty / executed_qty)
 
+    @staticmethod
+    def _order_is_terminal(order) -> bool:
+        return order.get('status') in {
+            'FILLED', 'CANCELED', 'REJECTED', 'EXPIRED', 'EXPIRED_IN_MATCH'
+        }
+
     def calculate_quantity(self) -> float:
         """Size a market BUY and preflight Binance's active quantity/notional rules."""
         symbol_info = self._symbol_info()
@@ -211,7 +217,7 @@ class BinanceAPI:
             ) from error
 
         status = order.get('status', 'UNKNOWN')
-        if status in ('NEW', 'PARTIALLY_FILLED', 'UNKNOWN'):
+        if not self._order_is_terminal(order):
             STORE.mark_order_unknown(client_order_id)
             raise RuntimeError(
                 f'Binance order {client_order_id} is still {status}; '
@@ -259,6 +265,12 @@ class BinanceAPI:
                 raise RuntimeError(f'An open {self.symbol} position already exists')
             quantity = self.calculate_quantity()
             order, client_order_id = self._create_market_order('BUY', quantity)
+            if not self._order_is_terminal(order):
+                STORE.mark_order_unknown(client_order_id)
+                raise RuntimeError(
+                    f'Binance BUY order {client_order_id} is still '
+                    f"{order.get('status', 'UNKNOWN')}; trading is paused for this symbol"
+                )
             executed_qty = Decimal(str(order.get('executedQty', '0')))
             acquired_qty = executed_qty - self._base_commission(order, base_asset)
             self.position_qty = float(acquired_qty)
@@ -287,6 +299,12 @@ class BinanceAPI:
                 raise ValueError('There is no sellable position quantity')
 
             order, client_order_id = self._create_market_order('SELL', quantity)
+            if not self._order_is_terminal(order):
+                STORE.mark_order_unknown(client_order_id)
+                raise RuntimeError(
+                    f'Binance SELL order {client_order_id} is still '
+                    f"{order.get('status', 'UNKNOWN')}; trading is paused for this symbol"
+                )
             executed_qty = Decimal(str(order.get('executedQty', '0')))
             if executed_qty <= 0:
                 raise RuntimeError('SELL order filled no quantity')
