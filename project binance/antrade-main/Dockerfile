@@ -9,7 +9,7 @@ WORKDIR /app
 
 RUN pip install --no-cache-dir poetry==1.8.5
 
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
 RUN poetry install --only main --no-root
 
 COPY . /app
