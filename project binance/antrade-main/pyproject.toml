@@ -7,7 +7,7 @@ license = "BSD 3-Clause License"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = "^3.11"
 pandas = "^2.0.1"
 python-binance = "^1.0.17"
 environs = "^9.5.0"
