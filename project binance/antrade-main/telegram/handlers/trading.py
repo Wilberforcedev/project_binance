@@ -1,14 +1,17 @@
+import math
 import threading
+
 from aiogram import types, Dispatcher
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters import Text
 from aiogram.types import ReplyKeyboardRemove
 from aiogram.dispatcher.filters.state import StatesGroup, State
-from antrade.algorithms import bot_closed, bot_off, ManualTrading, SMA, WoodieCCI
+
+from antrade.algorithms import bot_closed, bot_off, bot_on, ManualTrading, SMA, WoodieCCI
 from antrade.utils import symbol_list, get_balance_ticker
 from telegram.config_telegram import bot, CHAT_ID
 from telegram.templates import (
-    STATE_ALGO, STATE_SYMBOL, STATE_INTERVAL, STATE_QNTY, STATE_QNTY_MAX_VALUE_ERROR, 
+    STATE_ALGO, STATE_SYMBOL, STATE_INTERVAL, STATE_QNTY, STATE_QNTY_MAX_VALUE_ERROR,
     STATE_QNTY_MIN_VALUE_ERROR, STATE_QNTY_TYPE_ERROR, STATE_VALID_ERROR,
     ORDER_EXCEPTION, CLOSE_EXCEPTION
 )
@@ -17,8 +20,7 @@ from telegram.keyboards.kb_welcome import main_kb
 
 
 class TradeStateGroup(StatesGroup):
-    """ Состояние параметров: алгоритм, символ, таймфрейм, объем, старт/остановка алгоритма 
-    """
+    """Состояния настройки алгоритма и торговой сессии."""
     algorithm = State()
     symbol = State()
     interval = State()
@@ -28,21 +30,19 @@ class TradeStateGroup(StatesGroup):
 
 
 async def get_algorithms(message: types.Message):
-    """ Пункт 'Алгоритмы' главного меню, предлагает список алгоритмов, начинает цикл стейта 
-    """
+    """Открыть меню выбора алгоритма."""
     await TradeStateGroup.algorithm.set()
     await bot.send_message(
-        chat_id=CHAT_ID, 
-        text=STATE_ALGO, 
-        parse_mode="HTML", 
+        chat_id=CHAT_ID,
+        text=STATE_ALGO,
+        parse_mode="HTML",
         reply_markup=algorithm_kb
     )
     await message.delete()
 
 
 async def cancel_handler(message: types.Message, state: FSMContext):
-    """ Отменяет действия, сбрасывает стейт 
-    """
+    """Отменить настройку."""
     current_state = await state.get_state()
     if current_state is None:
         return
@@ -51,22 +51,20 @@ async def cancel_handler(message: types.Message, state: FSMContext):
 
 
 async def algorithm_callback(callback: types.CallbackQuery, state: FSMContext):
-    """ Сохраняет алгоритм в стейт, предлагает список тикеров 
-    """
     async with state.proxy() as data:
         if callback.data in ['Test', 'SMA', 'WoodieCCI']:
             data['algorithm'] = callback.data
             await TradeStateGroup.next()
             await bot.send_message(
-                chat_id=CHAT_ID, 
-                text=STATE_SYMBOL, 
-                parse_mode="HTML", 
+                chat_id=CHAT_ID,
+                text=STATE_SYMBOL,
+                parse_mode="HTML",
                 reply_markup=symbol_kb
             )
         else:
             await state.finish()
             await bot.send_message(
-                chat_id=CHAT_ID, 
+                chat_id=CHAT_ID,
                 text=STATE_VALID_ERROR,
                 parse_mode="HTML",
                 reply_markup=main_kb
@@ -74,45 +72,41 @@ async def algorithm_callback(callback: types.CallbackQuery, state: FSMContext):
 
 
 async def symbol_callback(callback: types.CallbackQuery, state: FSMContext):
-    """ Сохраняет тикер в стейт, предлагает список интервалов 
-    """
     async with state.proxy() as data:
         if callback.data in symbol_list:
             data['symbol'] = callback.data
             await TradeStateGroup.next()
             await bot.send_message(
-                chat_id=CHAT_ID, 
-                text=STATE_INTERVAL, 
-                parse_mode="HTML", 
+                chat_id=CHAT_ID,
+                text=STATE_INTERVAL,
+                parse_mode="HTML",
                 reply_markup=interval_kb
             )
         else:
             await state.finish()
             await bot.send_message(
-                chat_id=CHAT_ID, 
+                chat_id=CHAT_ID,
                 text=STATE_VALID_ERROR,
                 parse_mode="HTML",
                 reply_markup=main_kb
-            )            
+            )
 
 
 async def interval_callback(callback: types.CallbackQuery, state: FSMContext):
-    """ Сохраняет интервал в стейт, предлагает ввести рабочий объем ордеров 
-    """
     async with state.proxy() as data:
         if callback.data in ['1m', '5m', '15m', '30m', '1h', '4h', '1d']:
             data['interval'] = callback.data
             await TradeStateGroup.next()
             await bot.send_message(
-                chat_id=CHAT_ID, 
-                text=STATE_QNTY, 
+                chat_id=CHAT_ID,
+                text=STATE_QNTY,
                 parse_mode="HTML",
                 reply_markup=ReplyKeyboardRemove()
             )
         else:
             await state.finish()
             await bot.send_message(
-                chat_id=CHAT_ID, 
+                chat_id=CHAT_ID,
                 text=STATE_VALID_ERROR,
                 parse_mode="HTML",
                 reply_markup=main_kb
@@ -120,85 +114,93 @@ async def interval_callback(callback: types.CallbackQuery, state: FSMContext):
 
 
 async def qnty_message(message: types.Message, state: FSMContext):
-    """ Введенный объем проходит валидацию (числовое ли значение и меньше ли баланса),
-        сохраняется в стейт, выводит всю информацию из стейта и предлагает кнопку старта алгоритма
-    """
+    """Validate the USDT budget; keep the user in this state when input is invalid."""
     async with state.proxy() as data:
-        quantity = message.text
         try:
-            quantity_float = float(quantity)
-        except:
+            quantity_float = float(message.text)
+        except (TypeError, ValueError):
             await bot.send_message(
-                chat_id=CHAT_ID, 
-                text=STATE_QNTY_TYPE_ERROR, 
+                chat_id=CHAT_ID,
+                text=STATE_QNTY_TYPE_ERROR,
                 parse_mode="HTML"
             )
-            quantity_float = float(quantity)
+            return
+
+        if not math.isfinite(quantity_float):
+            await bot.send_message(
+                chat_id=CHAT_ID,
+                text=STATE_QNTY_TYPE_ERROR,
+                parse_mode="HTML"
+            )
+            return
 
         if quantity_float < 15:
             await bot.send_message(
-                chat_id=CHAT_ID, 
-                text=STATE_QNTY_MIN_VALUE_ERROR, 
+                chat_id=CHAT_ID,
+                text=STATE_QNTY_MIN_VALUE_ERROR,
                 parse_mode="HTML"
             )
-        elif get_balance_ticker('USDT') - quantity_float > 0:
-            data['qnty'] = quantity_float
-        else:
+            return
+
+        balance = get_balance_ticker('USDT')
+        if quantity_float >= balance:
             await bot.send_message(
-                chat_id=CHAT_ID, 
-                text=STATE_QNTY_MAX_VALUE_ERROR, 
+                chat_id=CHAT_ID,
+                text=STATE_QNTY_MAX_VALUE_ERROR,
                 parse_mode="HTML"
             )
-        
+            return
+
+        data['qnty'] = quantity_float
         await TradeStateGroup.next()
-        algorithm = data['algorithm']
-        symbol = data['symbol']
-        interval = data['interval']
-        qnty = data['qnty']
-        STATE_RESULT = '''Алгоритм: {} \n Тикер: {} \n Таймфрейм: {} \n Объем USDT: {}'''.format(
-            algorithm, symbol, interval, qnty
+        STATE_RESULT = (
+            f"Алгоритм: {data['algorithm']} \n"
+            f"Тикер: {data['symbol']} \n"
+            f"Таймфрейм: {data['interval']} \n"
+            f"Объем USDT: {data['qnty']}"
         )
         await bot.send_message(
-            chat_id=CHAT_ID, 
+            chat_id=CHAT_ID,
             text=STATE_RESULT,
             reply_markup=start_kb
         )
 
 
 async def start_callback(callback: types.CallbackQuery, state: FSMContext):
-    """ Сохраняет в стейт коллбэк 'start' и запускает алгоритм - вызывается 
-        экземпляр определенного алгоритма с параметрами из стейта 
-    """
     async with state.proxy() as data:
         try:
             data['start'] = callback.data
             algorithm = data['algorithm']
             if data['start'] == 'start':
-
                 if algorithm == 'Test':
                     state_data = ManualTrading(data['symbol'], data['interval'], data['qnty'])
                 elif algorithm == 'SMA':
                     state_data = SMA(data['symbol'], data['interval'], data['qnty'])
                 elif algorithm == 'WoodieCCI':
                     state_data = WoodieCCI(data['symbol'], data['interval'], data['qnty'])
+                else:
+                    raise ValueError(f'Unsupported algorithm: {algorithm}')
+
+                bot_on()
 
                 def work():
                     state_data.main()
-                thread_work = threading.Thread(target=work)
+
+                thread_work = threading.Thread(target=work, daemon=True)
                 thread_work.start()
 
                 await TradeStateGroup.next()
                 STATE_START = f'{algorithm} начал свою работу'
                 await callback.answer(STATE_START)
                 await bot.send_message(
-                    chat_id=CHAT_ID, 
+                    chat_id=CHAT_ID,
                     text=STATE_START,
                 )
-        except:
+        except Exception:
             await state.finish()
             print('Ошибка старта')
             await bot.send_message(
-                chat_id=CHAT_ID, 
+                chat_id=CHAT_ID,
                 text=ORDER_EXCEPTION,
                 parse_mode="HTML",
                 reply_markup=main_kb
@@ -206,58 +208,51 @@ async def start_callback(callback: types.CallbackQuery, state: FSMContext):
 
 
 async def manage_message(message: types.Message, state: FSMContext):
-    """ Размещение ордера SELL при вводе текстового сообщения 'Продать',
-        остановка алгоритма при вводе сообщения 'Стоп' 
-    """
     async with state.proxy() as data:
-        algorithm = data['algorithm']
-        if message.text == 'Продать':
+        algorithm = data.get('algorithm')
+        if message.text == 'Продать' and algorithm:
             try:
                 bot_closed()
-                print('Closed')
                 await TradeStateGroup.last()
                 STATE_CLOSED = f'Совершена ручная продажа по {algorithm}'
                 await bot.send_message(
-                    chat_id=CHAT_ID, 
+                    chat_id=CHAT_ID,
                     text=STATE_CLOSED
                 )
                 await message.delete()
-            except:
+            except Exception:
                 await bot.send_message(
-                    chat_id=CHAT_ID, 
+                    chat_id=CHAT_ID,
                     text=CLOSE_EXCEPTION,
                     parse_mode="HTML"
                 )
                 await message.delete()
-        if message.text == 'Стоп':
+        if message.text == 'Стоп' and algorithm:
             STATE_STOP_MESSAGE = f'\U0001F6D1 Вы действительно хотите остановить {algorithm}?'
             await bot.send_message(
-                chat_id=CHAT_ID, 
-                text=STATE_STOP_MESSAGE, 
+                chat_id=CHAT_ID,
+                text=STATE_STOP_MESSAGE,
                 reply_markup=stop_kb
             )
             await message.delete()
 
 
 async def stop_callback(callback: types.CallbackQuery, state: FSMContext):
-    """ Коллбэк, обрабатывающий кнопки контрольного вопроса: 
-        либо отключает алгоритм, либо продолжает его работу 
-    """
     async with state.proxy() as data:
         data['stop'] = callback.data
-        algorithm = data['algorithm']
+        algorithm = data.get('algorithm')
         if data['stop'] == 'continue':
-            STATE_CONTINUE = f'{algorithm} продолжает работу' 
+            STATE_CONTINUE = f'{algorithm} продолжает работу'
             await bot.send_message(
-                chat_id=CHAT_ID, 
+                chat_id=CHAT_ID,
                 text=STATE_CONTINUE,
             )
         elif data['stop'] == 'stop':
             bot_off()
             STATE_STOP = f'{algorithm} закончил свою работу'
             await bot.send_message(
-                chat_id=CHAT_ID, 
-                text=STATE_STOP, 
+                chat_id=CHAT_ID,
+                text=STATE_STOP,
                 reply_markup=main_kb
             )
             await state.finish()
