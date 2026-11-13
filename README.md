@@ -1,13 +1,13 @@
 # project_binance
 
-Antrade is a Telegram bot for algorithmic spot trading on Binance.
+Antrade is a Telegram bot for algorithmic Binance Spot trading, with SMA and WoodieCCI strategies.
 
 ## Features
 
 - Binance Spot market data and account balance access.
-- Trading strategy options: Test, SMA, and WoodieCCI.
-- Selectable USDT trading pairs, candle intervals, and trade budget.
+- Selectable trading strategy, USDT pair, candle interval, and trade budget.
 - Telegram controls to start or stop a session and request a manual sale.
+- Owner-only message and button access.
 
 ## Run with Docker
 
@@ -20,7 +20,7 @@ cd "project binance/antrade-main"
 cp .env.example .env
 ```
 
-Edit `.env` with your credentials, then start the bot:
+Edit `.env` with your credentials and numeric Telegram user ID in `TELEGRAM_ALLOWED_USER_ID`. In a private chat, `CHAT_ID` is usually the same as your user ID. Then start the bot:
 
 ```sh
 docker compose up --build
